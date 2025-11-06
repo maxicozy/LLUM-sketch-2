@@ -1,235 +1,442 @@
-let robots = [];
-let markers = [];
-const numRobots = 10;
-const numMarkers = 3;
-const markerRadius = 50;
-let draggedMarker = null;
-const robotSpeed = 1.8; // Fixed speed in pixels per frame
-let sandLayer; // Graphics layer for sand texture
+let pipes = [];
+let controlStations = [];
+let videos = {};
+let activeStation = null;
+
+// Keyframe system for glow animation
+// Each keyframe: position (0-100% where glow should be), pauseDuration (seconds to pause at that position)
+let glowKeyframes = {
+  station0: [
+    { position: 0, pauseDuration: 0.2 },
+    { position: 10, pauseDuration: 0.5 },
+    { position: 13, pauseDuration: 1 },
+    { position: 35, pauseDuration: 1 },
+    { position: 52, pauseDuration: 1.3},
+    { position: 66, pauseDuration: 4.9 },
+    { position: 90, pauseDuration: 1.5 },
+    { position: 100, pauseDuration: 0 }
+  ],
+  station1: [
+    { position: 0, pauseDuration: 0 },
+    { position: 8, pauseDuration: 1.05 },
+    { position: 11, pauseDuration: 0.9 },
+    { position: 13, pauseDuration: 1.6 },
+    { position: 22, pauseDuration: 1.3 },
+    { position: 30, pauseDuration: 1.1 },
+    { position: 35, pauseDuration: 1.2 },
+    { position: 41, pauseDuration: 1 },
+    { position: 45, pauseDuration: 0.8 },
+    { position: 48, pauseDuration: 0.2},
+    { position: 50, pauseDuration: 3.3},
+    { position: 53, pauseDuration: 0.5 },
+    { position: 56,pauseDuration: 0.5 }
+
+  ],
+  station2: [
+    { position: 0, pauseDuration: 0 },
+    { position: 30, pauseDuration: 1 },
+    { position: 100, pauseDuration: 0 }
+  ]
+};
+
+// Visual parameters for the glow
+let glowParams = {
+  size: 60,
+  brightness: 200,
+  fadeLength: 40
+};
+
+// Individual speed multipliers for each station's glow
+let glowSpeedMultipliers = {
+  station0: 0.2,   // Adjust speed for station 0
+  station1: 0.05,   // Adjust speed for station 1
+  station2: 0.25   // Adjust speed for station 2
+};
+
+let glowPosition = 0;
+let videoScale = 1.2;
+
+// Define pipe paths - each path is a series of connected segments
+let pipePaths = [];
+
+function preload() {
+  videos.station0 = createVideo('sewage_cam-01.mp4');
+  videos.station1 = createVideo('sewage_cam-02.mp4');
+  videos.station2 = createVideo('video3.mp4');
+  
+  for (let key in videos) {
+    videos[key].hide();
+    videos[key].loop();
+    videos[key].pause();
+  }
+}
 
 function setup() {
-  createCanvas(800, 800);
-  colorMode(HSB, 360, 100, 100, 100);
-  
-  // Create sand layer
-  sandLayer = createGraphics(800, 800);
-  sandLayer.colorMode(HSB, 360, 100, 100, 100);
-  sandLayer.background(20, 15, 30); // Dark background
-  
-  // Create 3 markers in a triangle pattern
-  let centerX = width / 2;
-  let centerY = height / 2;
-  let triangleRadius = 200;
-  
-  for (let i = 0; i < numMarkers; i++) {
-    let angle = (TWO_PI / numMarkers) * i - HALF_PI;
-    markers.push({
-      x: centerX + cos(angle) * triangleRadius,
-      y: centerY + sin(angle) * triangleRadius,
-      glow: 70,
-      hue: 180
-    });
-  }
-  
-  // Create robots with mandala parameters
-  for (let i = 0; i < numRobots; i++) {
-    robots.push({
-      x: width / 2,
-      y: height / 2,
-      prevX: width / 2,
-      prevY: height / 2,
-      angle: (TWO_PI / numRobots) * i,
-      baseAngleSpeed: 0.015,
-      spiralRadius: 50,
-      noiseOffset: random(1000)
-    });
-  }
+  createCanvas(1400, 700);
+  createPipeNetwork();
+  createControlStations();
 }
 
 function draw() {
-  // Slowly fade the sand layer back to background
-  sandLayer.fill(20, 15, 30, 2); // Very subtle fade
-  sandLayer.noStroke();
-  sandLayer.rect(0, 0, width, height);
+  background(0);
   
-  // Draw the sand layer
-  image(sandLayer, 0, 0);
-  
-  colorMode(HSB, 360, 100, 100, 100);
-  
-  // Update marker hue if mouse is hovering
-  for (let marker of markers) {
-    let d = dist(mouseX, mouseY, marker.x, marker.y);
-    if (d < markerRadius) {
-      marker.hue = (marker.hue + 0.5) % 360;
-    }
-  }
-  
-  // Draw glowing markers
-  for (let marker of markers) {
-    let glowSize = marker.glow + sin(frameCount * 0.05) * 20;
-    
-    for (let r = glowSize; r > 0; r -= 10) {
-      fill(marker.hue, 80, 80, map(r, 0, glowSize, 60, 0));
+  // Left half - video display or black
+  if (activeStation !== null) {
+    let video = videos[`station${activeStation}`];
+    if (video && video.loadedmetadata) {
+      let videoAspect = video.width / video.height;
+      let displayWidth = width / 2;
+      let displayHeight = height;
+      let displayAspect = displayWidth / displayHeight;
+      
+      let drawWidth, drawHeight, drawX, drawY;
+      
+      if (videoAspect > displayAspect) {
+        drawWidth = displayWidth * videoScale;
+        drawHeight = (displayWidth / videoAspect) * videoScale;
+        drawX = ((displayWidth - drawWidth) / 2) - 25;
+        drawY = (displayHeight - drawHeight) / 2;
+      } else {
+        drawHeight = displayHeight * videoScale;
+        drawWidth = (displayHeight * videoAspect) * videoScale;
+        drawX = ((displayWidth - drawWidth) / 2) - 25;
+        drawY = (displayHeight - drawHeight) / 2;
+      }
+      
+      fill(0);
       noStroke();
-      circle(marker.x, marker.y, r);
+      rect(0, 0, width / 2, height);
+      
+      image(video, drawX, drawY, drawWidth, drawHeight);
+    }
+  } else {
+    fill(0);
+    noStroke();
+    rect(0, 0, width / 2, height);
+  }
+  
+  // Right half - darker sand court
+  fill(60, 58, 55);
+  rect(width / 2, 0, width / 2, height);
+  
+  // Update glow position based on video playback and keyframes
+  if (activeStation !== null) {
+    let video = videos[`station${activeStation}`];
+    if (video && video.duration() > 0) {
+      let currentTime = video.time();
+      glowPosition = getGlowPositionAtTime(activeStation, currentTime);
+    }
+  }
+  
+  // Draw pipes
+  push();
+  translate(width / 2, 0);
+  
+  for (let i = 0; i < pipePaths.length; i++) {
+    let shouldGlow = false;
+    
+    if (activeStation !== null) {
+      let station = controlStations[activeStation];
+      shouldGlow = isPipePathConnectedToStation(pipePaths[i], station);
     }
     
-    fill(marker.hue, 90, 100);
-    circle(marker.x, marker.y, 8);
+    drawPipePath(pipePaths[i], shouldGlow);
   }
+  pop();
   
-  // CALCULATE PATTERN PARAMETERS FROM MARKER POSITIONS
-  
-  // 1. Center point (centroid of triangle)
-  let centerX = 0, centerY = 0;
-  for (let marker of markers) {
-    centerX += marker.x;
-    centerY += marker.y;
+  // Draw control stations
+  push();
+  translate(width / 2, 0);
+  for (let i = 0; i < controlStations.length; i++) {
+    drawControlStation(controlStations[i], i);
   }
-  centerX /= markers.length;
-  centerY /= markers.length;
+  pop();
   
-  // 2. Triangle size - STRONGLY affects overall radius range
-  let triangleSize = 0;
-  for (let marker of markers) {
-    triangleSize += dist(centerX, centerY, marker.x, marker.y);
-  }
-  triangleSize /= markers.length;
+  displayInfo();
+}
+
+function getGlowPositionAtTime(stationIndex, currentTime) {
+  let keyframes = glowKeyframes[`station${stationIndex}`];
+  let speedMultiplier = glowSpeedMultipliers[`station${stationIndex}`];
   
-  // Scale radius range directly with triangle size
-  let radiusMin = triangleSize * 0.3;
-  let radiusMax = triangleSize * 2.0;
+  let normalizedKeyframes = keyframes.map(kf => ({
+    position: kf.position / 100,
+    pauseDuration: kf.pauseDuration
+  }));
   
-  // 3. Triangle shape asymmetry - affects petal count
-  let distances = [];
-  for (let i = 0; i < markers.length; i++) {
-    let next = (i + 1) % markers.length;
-    distances.push(dist(markers[i].x, markers[i].y, markers[next].x, markers[next].y));
-  }
-  let avgDistance = (distances[0] + distances[1] + distances[2]) / 3;
-  let asymmetry = 0;
-  for (let d of distances) {
-    asymmetry += abs(d - avgDistance);
-  }
-  asymmetry /= avgDistance;
-  let petalCount = floor(map(asymmetry, 0, 1, 3, 8));
+  let cumulativeTime = 0;
   
-  // 4. Triangle rotation - affects pattern rotation speed
-  let triangleAngle = atan2(markers[0].y - centerY, markers[0].x - centerX);
-  let rotationInfluence = map(triangleAngle, -PI, PI, 0.5, 2.0);
-  
-  // 5. Average hue
-  let avgHue = (markers[0].hue + markers[1].hue + markers[2].hue) / 3;
-  
-  // 6. Hue variance - affects PATTERN TYPE
-  let hueVariance = 0;
-  for (let marker of markers) {
-    hueVariance += abs(marker.hue - avgHue);
-  }
-  hueVariance /= markers.length;
-  let mandalaInfluence = map(hueVariance, 0, 120, 0, 1);
-  let radiusFrequency = map(hueVariance, 0, 120, 0.01, 0.05);
-  
-  // Update and draw robots
-  for (let robot of robots) {
-    // Angle speed affected by triangle rotation
-    let angleSpeed = robot.baseAngleSpeed * rotationInfluence;
-    robot.angle += angleSpeed;
+  for (let i = 0; i < normalizedKeyframes.length - 1; i++) {
+    let kf = normalizedKeyframes[i];
+    let nextKf = normalizedKeyframes[i + 1];
     
-    // Spiral growth - scaled by triangle size
-    let spiralGrowth = (triangleSize * 0.001) * (1 - mandalaInfluence);
-    robot.spiralRadius += spiralGrowth;
-    if (robot.spiralRadius > radiusMax) {
-      robot.spiralRadius = radiusMin;
-    }
+    let distance = abs(nextKf.position - kf.position);
+    let movementTime = distance / speedMultiplier;
+    let totalSegmentTime = kf.pauseDuration + movementTime;
     
-    // Create mandala petal pattern with dynamic petal count
-    let petalPattern = sin(robot.angle * petalCount + frameCount * radiusFrequency);
-    
-    // Blend between spiral and mandala
-    let mandalaRadius = map(petalPattern, -1, 1, radiusMin, radiusMax);
-    let radius = lerp(robot.spiralRadius, mandalaRadius, mandalaInfluence);
-    
-    // Add noise scaled by triangle size
-    let noiseVal = noise(robot.noiseOffset + frameCount * 0.01, robot.angle);
-    let noiseVariation = map(noiseVal, 0, 1, -triangleSize * 0.15, triangleSize * 0.15);
-    
-    // Calculate target position
-    let targetX = centerX + cos(robot.angle) * (radius + noiseVariation);
-    let targetY = centerY + sin(robot.angle) * (radius + noiseVariation);
-    
-    // Secondary pattern scaled by triangle size
-    let secondaryAngle = robot.angle * (3 + hueVariance * 0.01);
-    let secondaryRadius = sin(frameCount * radiusFrequency * 2) * triangleSize * 0.15 * mandalaInfluence;
-    targetX += cos(secondaryAngle) * secondaryRadius;
-    targetY += sin(secondaryAngle) * secondaryRadius;
-    
-    // Store previous position
-    robot.prevX = robot.x;
-    robot.prevY = robot.y;
-    
-    // Move at CONSTANT SPEED towards target
-    let dx = targetX - robot.x;
-    let dy = targetY - robot.y;
-    let distance = sqrt(dx * dx + dy * dy);
-    
-    if (distance > 0) {
-      robot.x += (dx / distance) * robotSpeed;
-      robot.y += (dy / distance) * robotSpeed;
-    }
-    
-    // Find nearest marker for color
-    let nearestMarker = markers[0];
-    let minDist = dist(robot.x, robot.y, markers[0].x, markers[0].y);
-    for (let marker of markers) {
-      let d = dist(robot.x, robot.y, marker.x, marker.y);
-      if (d < minDist) {
-        minDist = d;
-        nearestMarker = marker;
+    if (currentTime <= cumulativeTime + totalSegmentTime) {
+      if (currentTime <= cumulativeTime + kf.pauseDuration) {
+        return kf.position;
+      } else {
+        let timeInMovement = currentTime - cumulativeTime - kf.pauseDuration;
+        let progress = timeInMovement / movementTime;
+        return lerp(kf.position, nextKf.position, progress);
       }
     }
-    // Add subtle darker edges for depth
-    sandLayer.stroke(20, 15, 20); // Medium brightness
-    sandLayer.strokeWeight(10);
-    sandLayer.line(robot.prevX, robot.prevY, robot.x, robot.y);
     
-    // Draw fresh plow trail on sand layer - brighter for new paths
-    sandLayer.stroke(20, 15, 50); // Brighter for fresh trails
-    sandLayer.strokeWeight(8);
-    sandLayer.line(robot.prevX, robot.prevY, robot.x, robot.y);
-
-    // Draw robot as simple circle
-    fill(nearestMarker.hue, 60, 80);
-    noStroke();
-    circle(robot.x, robot.y, 12);
+    cumulativeTime += totalSegmentTime;
   }
+  
+  return normalizedKeyframes[normalizedKeyframes.length - 1].position;
 }
 
-function mousePressed() {
-  for (let marker of markers) {
-    let d = dist(mouseX, mouseY, marker.x, marker.y);
-    if (d < markerRadius) {
-      draggedMarker = marker;
-      break;
+function isPipePathConnectedToStation(path, station) {
+  let threshold = 10;
+  
+  for (let segment of path.segments) {
+    if (segment.type === 'vertical') {
+      if (abs(segment.x - station.x) < threshold && 
+          segment.y1 <= station.y && segment.y2 >= station.y) {
+        return true;
+      }
+    } else if (segment.type === 'horizontal') {
+      if (abs(segment.y - station.y) < threshold && 
+          segment.x1 <= station.x && segment.x2 >= station.x) {
+        return true;
+      }
     }
   }
+  return false;
 }
 
-function mouseDragged() {
-  if (draggedMarker) {
-    draggedMarker.x = constrain(mouseX, 50, width - 50);
-    draggedMarker.y = constrain(mouseY, 50, height - 50);
+function drawPipePath(path, shouldGlow) {
+  let pipeRadius = 7.5;
+  let ridgeSpacing = 8;
+  
+  // Calculate total path length
+  let totalLength = 0;
+  let segmentLengths = [];
+  
+  for (let segment of path.segments) {
+    let length;
+    if (segment.type === 'vertical') {
+      length = abs(segment.y2 - segment.y1);
+    } else {
+      length = abs(segment.x2 - segment.x1);
+    }
+    segmentLengths.push(length);
+    totalLength += length;
+  }
+  
+  // Draw each segment
+  let cumulativeLength = 0;
+  
+  for (let i = 0; i < path.segments.length; i++) {
+    let segment = path.segments[i];
+    let segmentLength = segmentLengths[i];
+    
+    if (segment.type === 'vertical') {
+      // Draw main pipe body
+      fill(160, 45, 45);
+      noStroke();
+      rect(segment.x - pipeRadius, segment.y1, pipeRadius * 2, segment.y2 - segment.y1);
+      
+      // Draw glow if active
+      if (shouldGlow) {
+        let segmentStart = cumulativeLength / totalLength;
+        let segmentEnd = (cumulativeLength + segmentLength) / totalLength;
+        
+        if (glowPosition >= segmentStart && glowPosition <= segmentEnd) {
+          let posInSegment = (glowPosition - segmentStart) / (segmentEnd - segmentStart);
+          let glowY = segment.y1 + (segment.y2 - segment.y1) * posInSegment;
+          
+          for (let j = 0; j < glowParams.size; j++) {
+            let fadeIn = min(j / glowParams.fadeLength, 1);
+            let fadeOut = min((glowParams.size - j) / glowParams.fadeLength, 1);
+            let alpha = glowParams.brightness * fadeIn * fadeOut;
+            
+            fill(255, 220, 150, alpha);
+            noStroke();
+            rect(segment.x - pipeRadius, glowY + j - glowParams.size/2, pipeRadius * 2, 1);
+          }
+        }
+      }
+      
+      // Draw ridges
+      stroke(180, 50, 50);
+      strokeWeight(2);
+      for (let y = segment.y1; y < segment.y2; y += ridgeSpacing) {
+        line(segment.x - pipeRadius, y, segment.x + pipeRadius, y);
+      }
+      
+    } else if (segment.type === 'horizontal') {
+      // Draw main pipe body
+      fill(160, 45, 45);
+      noStroke();
+      rect(segment.x1, segment.y - pipeRadius, segment.x2 - segment.x1, pipeRadius * 2);
+      
+      // Draw glow if active
+      if (shouldGlow) {
+        let segmentStart = cumulativeLength / totalLength;
+        let segmentEnd = (cumulativeLength + segmentLength) / totalLength;
+        
+        if (glowPosition >= segmentStart && glowPosition <= segmentEnd) {
+          let posInSegment = (glowPosition - segmentStart) / (segmentEnd - segmentStart);
+          let glowX = segment.x1 + (segment.x2 - segment.x1) * posInSegment;
+          
+          for (let j = 0; j < glowParams.size; j++) {
+            let fadeIn = min(j / glowParams.fadeLength, 1);
+            let fadeOut = min((glowParams.size - j) / glowParams.fadeLength, 1);
+            let alpha = glowParams.brightness * fadeIn * fadeOut;
+            
+            fill(255, 220, 150, alpha);
+            noStroke();
+            rect(glowX + j - glowParams.size/2, segment.y - pipeRadius, 1, pipeRadius * 2);
+          }
+        }
+      }
+      
+      // Draw ridges
+      stroke(180, 50, 50);
+      strokeWeight(2);
+      for (let x = segment.x1; x < segment.x2; x += ridgeSpacing) {
+        line(x, segment.y - pipeRadius, x, segment.y + pipeRadius);
+      }
+    }
+    
+    cumulativeLength += segmentLength;
   }
 }
 
-function mouseReleased() {
-  draggedMarker = null;
+function drawControlStation(station, index) {
+  let adjustedMouseX = mouseX - width / 2;
+  let isHovering = adjustedMouseX > station.x - station.size / 2 &&
+                   adjustedMouseX < station.x + station.size / 2 &&
+                   mouseY > station.y - station.size / 2 &&
+                   mouseY < station.y + station.size / 2;
+  
+  if (isHovering && activeStation !== index) {
+    activeStation = index;
+    for (let key in videos) {
+      videos[key].pause();
+      videos[key].time(0);
+    }
+    videos[`station${index}`].loop();
+    glowPosition = 0;
+  }
+  
+  if (!isHovering && activeStation === index) {
+    let overAnyStation = false;
+    for (let s of controlStations) {
+      if (adjustedMouseX > s.x - s.size / 2 &&
+          adjustedMouseX < s.x + s.size / 2 &&
+          mouseY > s.y - s.size / 2 &&
+          mouseY < s.y + s.size / 2) {
+        overAnyStation = true;
+        break;
+      }
+    }
+    if (!overAnyStation) {
+      activeStation = null;
+      for (let key in videos) {
+        videos[key].pause();
+      }
+    }
+  }
+  
+  if (isHovering) {
+    station.glowIntensity = lerp(station.glowIntensity, 255, 0.1);
+  } else {
+    station.glowIntensity = lerp(station.glowIntensity, 0, 0.1);
+  }
+  
+  fill(80);
+  noStroke();
+  rectMode(CENTER);
+  rect(station.x, station.y, station.size, station.size, 3);
+  
+  if (station.glowIntensity > 1) {
+    drawingContext.shadowBlur = 20;
+    drawingContext.shadowColor = `rgba(255, 200, 100, ${station.glowIntensity / 255})`;
+    
+    noFill();
+    stroke(255, 220, 150, station.glowIntensity);
+    strokeWeight(3);
+    rect(station.x, station.y, station.size, station.size, 3);
+    
+    drawingContext.shadowBlur = 0;
+  }
+  
+  rectMode(CORNER);
 }
 
-function keyPressed() {
-  // Press 'r' to reset sand
-  if (key === 'r' || key === 'R') {
-    sandLayer.background(20, 15, 30);
+function displayInfo() {
+  fill(255);
+  noStroke();
+  textAlign(LEFT);
+  textSize(12);
+  text(`Glow Position: ${(glowPosition * 100).toFixed(1)}%`, 10, 20);
+  if (activeStation !== null) {
+    text(`Active Station: ${activeStation}`, 10, 40);
+    text(`Speed: ${glowSpeedMultipliers[`station${activeStation}`]}`, 10, 60);
+  }
+}
+
+function createPipeNetwork() {
+  let rightWidth = width / 2;
+  
+  // Path 0: Simple vertical
+  pipePaths.push({
+    segments: [
+      { type: 'vertical', x: 280, y1: 0, y2: height }
+    ]
+  });
+  
+  // Path 1: L-shape (horizontal then vertical)
+  pipePaths.push({
+    segments: [
+      { type: 'horizontal', x1: 0, x2: 490, y: 200 },
+      { type: 'vertical', x: 490, y1: 200, y2: height }
+    ]
+  });
+  
+  // Path 2: L-shape (vertical then horizontal) - for station 2
+  pipePaths.push({
+    segments: [
+      { type: 'vertical', x: 140, y1: 0, y2: 580 },
+      { type: 'horizontal', x1: 140, x2: rightWidth, y: 580 }
+    ]
+  });
+  
+  // Path 3: L-shape standalone
+  pipePaths.push({
+    segments: [
+      { type: 'horizontal', x1: 0, x2: 580, y: 380 },
+      { type: 'vertical', x: 580, y1: 0, y2: 380 }
+    ]
+  });
+  
+  // Path 4: Simple horizontal
+  pipePaths.push({
+    segments: [
+      { type: 'horizontal', x1: 0, x2: rightWidth, y: 120 }
+    ]
+  });
+}
+
+function createControlStations() {
+  let stations = [
+    { x: 280, y: 350 },
+    { x: 490, y: 200 },
+    { x: 140, y: 580 }
+  ];
+  
+  for (let pos of stations) {
+    controlStations.push({
+      x: pos.x,
+      y: pos.y,
+      size: 50,
+      glowIntensity: 0
+    });
   }
 }
